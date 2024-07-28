@@ -1,0 +1,372 @@
+---
+title: "Modeling and Forecasting the U.S. House Price Index"
+author: "Patrick Omens"
+date: "2024-05-29"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+set.seed(123)
+
+getwd()
+
+
+# setwd('C:/Users/Patrick Omens/R Studio files')
+
+data = read.csv('USSTHPI.csv')
+
+
+
+nrow(data)
+
+
+```
+
+
+
+
+
+```{r}
+
+
+
+ts_data = ts(data, start = c(1975, 1), frequency = 4)
+
+
+
+
+
+
+library(ggplot2)
+
+
+
+
+
+
+df <- data.frame(
+  time = time(ts_data),
+  value = as.numeric(ts_data[, 2])
+)
+
+# Plot using ggplot2
+library(ggplot2)
+
+ggplot(df, aes(x = time, y = value)) +
+  geom_line() +
+  labs(title = "House Price Index over time", x = "Year", y = "HPI") +
+  theme_minimal()
+
+
+
+
+```
+
+
+
+```{r}
+
+qqnorm(df$value, main = "Q-Q Plot of original HPI data")
+qqline(df$value, col = "red")
+
+acf(df$value, main = 'ACF of original HPI data')
+
+pacf(df$value, main = 'PACF of original HPI data')
+
+
+
+```
+
+```{}
+
+The ACF and PACF of the original time series are shown above. The ACF plot 
+has a very slow decay. Because of this, we will perform differencing.
+
+
+
+```
+
+
+
+
+```{r}
+
+
+library(forecast)
+
+
+log_data = diff(log(ts_data[,2]))
+
+
+
+
+
+
+plot(log_data, ylab = 'values', main = 'Transformed HPI Time Series Plot')
+
+
+qqnorm(log_data, main = 'Q-Q Plot of Transformed Data')
+qqline(log_data, col = 'cyan')
+
+acf(log_data)
+
+```
+
+
+
+```{}
+
+The ACF still has a very slow decay. We will instead perform second-order 
+differencing.
+
+```
+
+
+
+
+```{r}
+
+log_data = diff(log(ts_data[,2]), differences = 2)
+
+plot(log_data, ylab = 'values', main = 'Transformed HPI Time Series Plot')
+
+
+qqnorm(log_data, main = 'Q-Q Plot of Transformed Data')
+qqline(log_data, col = 'cyan')
+
+acf(log_data, main = 'ACF Plot of Transformed Data')
+pacf(log_data, main = 'PACF Plot of Transformed Data')
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+
+
+
+
+auto_fit <- auto.arima(log_data, seasonal = TRUE)
+print(auto_fit)
+
+
+
+
+```
+
+```{}
+
+For the seasonal component, P = 2, D = 0, Q = 0. We will keep this in mind 
+later when we do our forecasting.
+
+```
+
+
+
+
+
+```{r}
+library(astsa)
+
+sarima(log_data, 1, 0, 0)
+
+
+
+
+```
+
+```{}
+
+The AIC for the AR(1) model is -6.023, and the BIC is -5.972.
+
+
+```
+
+
+
+```{r}
+
+
+sarimaMod = arima(log_data, order = c(1, 0, 0), 
+                  seasonal = list(order = c(0, 0, 0)))
+
+sarimaMod
+
+
+
+sarima(log_data, 0, 0, 2)
+
+
+
+```
+
+```{}
+
+The AIC for the MA(2) model is -6.206, and the BIC is -6.138.
+
+This model has a lower BIC and AIC than the AR(1) model, so we will use 
+the MA(2) model instead.
+
+```
+
+
+
+
+
+```{r}
+
+
+
+sarimaMod2 = arima(log_data, order = c(0, 0, 2), seasonal = 
+                     list(order = c(0, 0, 0)))
+sarimaMod2
+
+
+
+```
+
+
+
+
+
+```{r}
+HPI = ts_data[,2]
+
+
+sarima.for(HPI, n.ahead = 24, p = 0, d = 0, q = 2, P = 2, D = 0, 
+           Q = 0, S = 4)
+
+forecast = sarima.for(HPI, n.ahead = 24, p = 0, d = 0, q = 2, P = 2, D = 0, 
+           Q = 0, S = 4)
+
+
+
+```
+
+```{r}
+
+# Extract forecasted values and standard errors
+forecasted_values <- forecast$pred
+forecasted_se <- forecast$se
+
+# Generate the time points for the forecast period
+forecast_start <- end(ts_data[,2])[1] + 
+  (end(ts_data[,2])[2] - 1) / frequency(ts_data[,2])
+forecast_time_points <- seq(forecast_start, 
+                            by = 1 / frequency(ts_data[,2]), 
+                            length.out = length(forecasted_values))
+
+# Convert time points to year labels
+years <- floor(forecast_time_points)
+quarters <- (forecast_time_points - years) * 4 + 1
+year_labels <- paste(years, "Q", quarters, sep = "")
+
+# Plot the forecasted values
+plot(forecast_time_points, forecasted_values, type = "l", col = "blue", 
+     ylim = range(c(forecasted_values + 2 * forecasted_se, 
+                    forecasted_values - 2 * forecasted_se)), 
+     xlab = "Year", ylab = "HPI", main = "SARIMA Forecast of HPI", xaxt = "n")
+
+# Add custom x-axis with year labels
+axis(1, at = forecast_time_points, labels = year_labels, cex.axis = 0.7)
+
+# Add prediction intervals
+lines(forecast_time_points, forecasted_values + 2 * forecasted_se, 
+      col = "red", lty = 2)
+lines(forecast_time_points, forecasted_values - 2 * forecasted_se, 
+      col = "red", lty = 2)
+
+# Add legend
+legend("topleft", legend = c("Forecasted Values", "95% Prediction Interval"), 
+       col = c("blue", "red"), lty = c(1, 2))
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+# Spectral analysis
+
+fftData = fft(log_data)
+
+lenData = length(log_data)
+ampData = Mod(fftData) / lenData
+
+freqData = (0:(lenData - 1)) / lenData
+
+plot(freqData[1:(lenData/2)], ampData[1:(lenData/2)], type = 'h', 
+     main = 'Periodogram of HPI',
+     xlab = 'Frequency', ylab = 'Amplitude')
+
+
+
+```
+
+```{}
+
+
+
+
+
+```
+
+
+```{r}
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
